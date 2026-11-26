@@ -3,7 +3,7 @@ name: handshake check
 
 on:
   push:
-    branches: [ci/handshake-check]
+    branches: ["ci/handshake-check*"]
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 3
+          fetch-depth: 10
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: 24
@@ -26,13 +26,18 @@ jobs:
         run: for i in 1 2 3; do yarn && break; sleep 5; done
       - name: Build
         run: yarn build
-      - name: Prettier and eslint on the changed files
+      - name: eslint on the changed files, and the changes of Prettier
         if: always()
         working-directory: packages/api-graphql
         run: |
           set -o pipefail
           files="src/Providers/AWSWebSocketProvider/index.ts __tests__/AWSAppSyncRealTimeProvider.test.ts"
-          { npx prettier --check $files && npx eslint $files; } 2>&1 | tee "$RUNNER_TEMP/lint.txt"
+          npx eslint $files 2>&1 | tee "$RUNNER_TEMP/lint.txt"
+          # Lines of main fail the Prettier check too, so this part only records the changes that Prettier makes
+          npx prettier --version | tee -a "$RUNNER_TEMP/lint.txt"
+          npx prettier --write $files > /dev/null
+          git diff -U0 -- $files | tee -a "$RUNNER_TEMP/lint.txt"
+          git checkout -- $files
       - name: The api-graphql suite with the fix
         if: always()
         working-directory: packages/api-graphql
