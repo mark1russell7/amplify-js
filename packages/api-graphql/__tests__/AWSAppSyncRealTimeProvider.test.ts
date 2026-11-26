@@ -1122,6 +1122,88 @@ describe('AWSAppSyncRealTimeProvider', () => {
 					});
 				});
 
+				describe('REPRO the hub state after an ack timeout and a retry that connects', () => {
+					// Each arm: socket A opens, then (only in the repro arm) its ack times out.
+					// The retry socket B connects. Then B closes, as after a network drop.
+					const runArm = async (ackTimesOut: boolean) => {
+						let sockets = 0;
+						jest
+							.spyOn(provider as any, '_getNewWebSocket')
+							.mockImplementation(() => {
+								if (sockets++ > 0) {
+									fakeWebSocketInterface.resetWebsocket();
+								}
+								fakeWebSocketInterface.newWebSocket();
+
+								return fakeWebSocketInterface.webSocket as WebSocket;
+							});
+
+						const observer = provider.subscribe({
+							appSyncGraphqlEndpoint: 'ws://localhost:8080',
+						});
+						observer.subscribe({ error: () => {} });
+
+						await fakeWebSocketInterface.readyForUse;
+						const socketA = fakeWebSocketInterface.webSocket;
+						await fakeWebSocketInterface.triggerOpen();
+						socketA.readyState = WebSocket.OPEN;
+
+						if (ackTimesOut) {
+							await delay(40);
+							while (fakeWebSocketInterface.webSocket === socketA) {
+								await delay(10);
+							}
+							await fakeWebSocketInterface.readyForUse;
+							await fakeWebSocketInterface.triggerOpen();
+							fakeWebSocketInterface.webSocket.readyState = WebSocket.OPEN;
+						}
+
+						await fakeWebSocketInterface.handShakeMessage();
+						await fakeWebSocketInterface.startAckMessage();
+						while (!(provider as any).keepAliveHeartbeatIntervalId) {
+							await delay(5);
+						}
+						await fakeWebSocketInterface.keepAlive();
+						await delay(20);
+
+						const states = fakeWebSocketInterface.observedConnectionStates;
+						const afterConnect = states[states.length - 1];
+						const socketsBeforeClose = sockets;
+
+						await fakeWebSocketInterface.triggerClose();
+						await delay(1000);
+
+						const result = {
+							ackTimesOut,
+							afterConnect,
+							afterClose: states.slice(states.indexOf(afterConnect)),
+							newSocketsAfterClose: sockets - socketsBeforeClose,
+						};
+						// eslint-disable-next-line no-console
+						console.log(`REPRO-RESULT ${JSON.stringify(result)}`);
+
+						return result;
+					};
+
+					test('REPRO control: no ack timeout', async () => {
+						await replaceConstant('CONNECTION_INIT_TIMEOUT', 20, async () => {
+							await replaceConstant('MAX_DELAY_MS', 5000, async () => {
+								const result = await runArm(false);
+								expect(result.afterConnect).toBe(CS.Connected);
+							});
+						});
+					}, 10_000);
+
+					test('REPRO: one ack timeout, then a retry that connects', async () => {
+						await replaceConstant('CONNECTION_INIT_TIMEOUT', 20, async () => {
+							await replaceConstant('MAX_DELAY_MS', 5000, async () => {
+								const result = await runArm(true);
+								expect(result.afterConnect).toBe(CS.Connected);
+							});
+						});
+					}, 10_000);
+				});
+
 				describe('constructed against the different auth interfaces', () => {
 					test('authenticating with API_KEY', async () => {
 						expect.assertions(1);

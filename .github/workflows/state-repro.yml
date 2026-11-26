@@ -1,0 +1,36 @@
+# A fork-only repro: the hub state after an ack timeout and a retry that connects. It is not part of a PR.
+name: state repro
+
+on:
+  push:
+    branches: ["ci/state-repro*"]
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24
+      - name: Install
+        run: for i in 1 2 3; do yarn && break; sleep 5; done
+      - name: Build
+        run: yarn build
+      - name: The repro and its control
+        working-directory: packages/api-graphql
+        run: |
+          npx jest -w 1 --verbose __tests__/AWSAppSyncRealTimeProvider.test.ts -t "REPRO" > "$RUNNER_TEMP/state-repro.txt" 2>&1 || true
+          grep -n "REPRO-RESULT\|✓\|✕\|Tests:" "$RUNNER_TEMP/state-repro.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: state-repro
+          path: ${{ runner.temp }}/state-repro.txt
